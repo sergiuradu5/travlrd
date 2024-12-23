@@ -1,0 +1,1 @@
+export const DAYS_UNTIL_INVOICE_DUE = 14;

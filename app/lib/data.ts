@@ -1,11 +1,14 @@
-import { sql } from '@vercel/postgres';
+import { QueryResult, sql } from '@vercel/postgres';
+import { DAYS_UNTIL_INVOICE_DUE } from './constants';
 import {
   CustomerField,
   CustomersTableType,
   InvoiceForm,
+  InvoiceLogsTable,
   InvoicesTable,
+  InvoiceTabStatusType,
   LatestInvoiceRaw,
-  Revenue,
+  Revenue
 } from './definitions';
 import { formatCurrency } from './utils';
 
@@ -87,11 +90,14 @@ const ITEMS_PER_PAGE = 6;
 export async function fetchFilteredInvoices(
   query: string,
   currentPage: number,
+  status?: InvoiceTabStatusType
 ) {
   const offset = (currentPage - 1) * ITEMS_PER_PAGE;
 
   try {
-    const invoices = await sql<InvoicesTable>`
+    let invoices: QueryResult<InvoicesTable> | undefined = undefined;
+    if (!status) {
+      invoices = await sql<InvoicesTable>`
       SELECT
         invoices.id,
         invoices.amount,
@@ -111,6 +117,101 @@ export async function fetchFilteredInvoices(
       ORDER BY invoices.date DESC
       LIMIT ${ITEMS_PER_PAGE} OFFSET ${offset}
     `;
+    } else {
+      switch (status) {
+        case 'all': {
+          invoices = await sql`SELECT
+          invoices.id,
+          invoices.amount,
+          invoices.date,
+          invoices.status,
+          customers.name,
+          customers.email,
+          customers.image_url
+        FROM invoices
+        JOIN customers ON invoices.customer_id = customers.id
+        WHERE
+          ( customers.name ILIKE ${`%${query}%`} OR
+          customers.email ILIKE ${`%${query}%`} OR
+          invoices.amount::text ILIKE ${`%${query}%`} OR
+          invoices.date::text ILIKE ${`%${query}%`} ) 
+        ORDER BY invoices.date DESC
+        LIMIT ${ITEMS_PER_PAGE} OFFSET ${offset}`
+          break;
+        }
+
+        case 'overdue': {
+          const searchParam = `%${query}%`;
+          invoices = await sql.query(`SELECT
+          invoices.id,
+          invoices.amount,
+          invoices.date,
+          invoices.status,
+          customers.name,
+          customers.email,
+          customers.image_url
+        FROM invoices
+        JOIN customers ON invoices.customer_id = customers.id
+        WHERE
+          ( customers.name ILIKE $1 OR
+          customers.email ILIKE $1 OR
+          invoices.amount::text ILIKE $1 OR
+          invoices.date::text ILIKE $1 ) 
+
+         AND invoices.date::TIMESTAMP < (NOW() - INTERVAL '${DAYS_UNTIL_INVOICE_DUE} days') AND invoices.status = 'pending'
+          ORDER BY invoices.date DESC
+        LIMIT ${ITEMS_PER_PAGE} OFFSET ${offset}`, [searchParam]);
+          break;
+        }
+
+        case 'pending': {
+          const searchParam = `%${query}%`;
+          invoices = await sql.query(`SELECT
+          invoices.id,
+          invoices.amount,
+          invoices.date,
+          invoices.status,
+          customers.name,
+          customers.email,
+          customers.image_url
+        FROM invoices
+        JOIN customers ON invoices.customer_id = customers.id
+        WHERE
+          ( customers.name ILIKE $1 OR
+          customers.email ILIKE $1 OR
+          invoices.amount::text ILIKE $1 OR
+          invoices.date::text ILIKE $1 ) 
+
+         AND invoices.date::TIMESTAMP >= (NOW() - INTERVAL '${DAYS_UNTIL_INVOICE_DUE} days') AND invoices.status = 'pending'
+          ORDER BY invoices.date DESC
+        LIMIT ${ITEMS_PER_PAGE} OFFSET ${offset}`, [searchParam]);
+          break;
+        }
+
+        default: {
+          invoices = await sql`SELECT
+          invoices.id,
+          invoices.amount,
+          invoices.date,
+          invoices.status,
+          customers.name,
+          customers.email,
+          customers.image_url
+        FROM invoices
+        JOIN customers ON invoices.customer_id = customers.id
+        WHERE
+          ( customers.name ILIKE ${`%${query}%`} OR
+          customers.email ILIKE ${`%${query}%`} OR
+          invoices.amount::text ILIKE ${`%${query}%`} OR
+          invoices.date::text ILIKE ${`%${query}%`} ) 
+
+           AND invoices.status = ${status}
+        ORDER BY invoices.date DESC
+        LIMIT ${ITEMS_PER_PAGE} OFFSET ${offset}`;
+          break;
+        }
+      }
+    }
 
     return invoices.rows;
   } catch (error) {
@@ -119,9 +220,11 @@ export async function fetchFilteredInvoices(
   }
 }
 
-export async function fetchInvoicesPages(query: string) {
+export async function fetchInvoicesPages(query: string, status?: InvoiceTabStatusType) {
   try {
-    const count = await sql`SELECT COUNT(*)
+    let count: QueryResult<{ count: string }> | undefined = undefined;
+    if (!status) {
+      count = await sql`SELECT COUNT(*)
     FROM invoices
     JOIN customers ON invoices.customer_id = customers.id
     WHERE
@@ -131,6 +234,75 @@ export async function fetchInvoicesPages(query: string) {
       invoices.date::text ILIKE ${`%${query}%`} OR
       invoices.status ILIKE ${`%${query}%`}
   `;
+    } else {
+      switch (status) {
+        case 'all': {
+          count = await sql`SELECT COUNT(*)
+          FROM invoices
+          JOIN customers ON invoices.customer_id = customers.id
+          WHERE
+           ( customers.name ILIKE ${`%${query}%`} OR
+            customers.email ILIKE ${`%${query}%`} OR
+            invoices.amount::text ILIKE ${`%${query}%`} OR
+            invoices.date::text ILIKE ${`%${query}%`} ) `;
+          break;
+        }
+
+        case 'overdue': {
+          const searchParam = `%${query}%`; // Define once and reuse
+          count = await sql.query(`
+            SELECT COUNT(*)
+            FROM invoices
+            JOIN customers ON invoices.customer_id = customers.id
+            WHERE
+              (
+                customers.name ILIKE $1 OR
+                customers.email ILIKE $1 OR
+                invoices.amount::text ILIKE $1 OR
+                invoices.date::text ILIKE $1
+              )
+              AND invoices.date::date < NOW()::DATE - INTERVAL '${DAYS_UNTIL_INVOICE_DUE} days' 
+              AND invoices.status = 'pending'
+          `, [searchParam]);
+
+          break;
+        }
+
+        case 'pending': {
+          const searchParam = `%${query}%`; // Define once and reuse
+
+          count = await sql.query(`
+            SELECT COUNT(*)
+            FROM invoices
+            JOIN customers ON invoices.customer_id = customers.id
+            WHERE
+              (
+                customers.name ILIKE $1 OR
+                customers.email ILIKE $1 OR
+                invoices.amount::text ILIKE $1 OR
+                invoices.date::text ILIKE $1
+              )
+              AND invoices.date::date >= NOW()::DATE - INTERVAL '${DAYS_UNTIL_INVOICE_DUE} days'
+              AND invoices.status = 'pending'
+          `, [searchParam]);
+
+          break;
+        }
+
+        default: {
+          count = await sql`SELECT COUNT(*)
+          FROM invoices
+          JOIN customers ON invoices.customer_id = customers.id
+          WHERE
+           ( customers.name ILIKE ${`%${query}%`} OR
+            customers.email ILIKE ${`%${query}%`} OR
+            invoices.amount::text ILIKE ${`%${query}%`} OR
+            invoices.date::text ILIKE ${`%${query}%`} ) AND invoices.status = ${status}`;
+          break;
+        }
+
+      }
+    }
 
     const totalPages = Math.ceil(Number(count.rows[0].count) / ITEMS_PER_PAGE);
     return totalPages;
@@ -162,6 +334,33 @@ export async function fetchInvoiceById(id: string) {
   } catch (error) {
     console.error('Database Error:', error);
     throw new Error('Failed to fetch invoice.');
+  }
+}
+
+
+export async function fetchInvoiceLogsByInvoiceId(invoiceId: string) {
+  try {
+    const invoice_logs = await sql<InvoiceLogsTable>`
+      SELECT
+        invoice_logs.id,
+        invoice_logs.invoice_id,
+        invoice_logs.date,
+        invoice_logs.type,
+        invoice_logs.from_status,
+        invoice_logs.to_status,
+        users.name as user_name,
+        users.email as user_email,
+        users.id as user_id
+      FROM invoice_logs
+      LEFT JOIN users ON invoice_logs.user_id = users.id
+      WHERE invoice_logs.invoice_id = ${invoiceId}
+      ORDER BY invoice_logs.date DESC;
+    `;
+
+    return invoice_logs.rows;
+  } catch (error) {
+    console.error('Database Error:', error);
+    throw new Error('Failed to fetch invoice logs.');
   }
 }
 

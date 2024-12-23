@@ -44,6 +44,14 @@ export type LatestInvoiceRaw = Omit<LatestInvoice, 'amount'> & {
   amount: number;
 };
 
+export const invoiceTabStatuses = ["all", "pending", "paid", "overdue", "canceled"] as const;
+
+export type InvoiceTabStatusType = (typeof invoiceTabStatuses)[number];
+
+export const invoiceStatuses = ['pending', 'paid', 'canceled'] as const;
+
+export type InvoiceStatusType = typeof invoiceStatuses[number];
+
 export type InvoicesTable = {
   id: string;
   customer_id: string;
@@ -52,8 +60,22 @@ export type InvoicesTable = {
   image_url: string;
   date: string;
   amount: number;
-  status: 'pending' | 'paid';
+  status: InvoiceStatusType;
 };
+
+export type InvoiceLogType = 'change' | 'restore';
+
+export type InvoiceLogsTable = {
+  id: string;
+  date: string;
+  type: InvoiceLogType;
+  user_name: string;
+  user_email: string;
+  user_id: string;
+  from_status: InvoiceStatusType;
+  to_status: InvoiceStatusType;
+  invoice_id: string;
+}
 
 export type CustomersTableType = {
   id: string;
@@ -84,5 +106,5 @@ export type InvoiceForm = {
   id: string;
   customer_id: string;
   amount: number;
-  status: 'pending' | 'paid';
+  status: InvoiceStatusType;
 };

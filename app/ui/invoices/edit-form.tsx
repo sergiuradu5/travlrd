@@ -1,16 +1,22 @@
-'use client';
+"use client";
 
-import { CustomerField, InvoiceForm } from '@/app/lib/definitions';
+import { State, updateInvoice } from "@/app/lib/actions";
+import {
+  CustomerField,
+  InvoiceForm,
+  InvoiceStatusType,
+} from "@/app/lib/definitions";
+import { Button } from "@/app/ui/button";
 import {
   CheckIcon,
   ClockIcon,
   CurrencyDollarIcon,
   UserCircleIcon,
-} from '@heroicons/react/24/outline';
-import Link from 'next/link';
-import { Button } from '@/app/ui/button';
-import { updateInvoice, State } from '@/app/lib/actions';
-import { useActionState } from 'react';
+  XCircleIcon,
+} from "@heroicons/react/24/outline";
+import { useSession } from "next-auth/react";
+import Link from "next/link";
+import { useActionState, useEffect, useState } from "react";
 
 export default function EditInvoiceForm({
   invoice,
@@ -19,9 +25,27 @@ export default function EditInvoiceForm({
   invoice: InvoiceForm;
   customers: CustomerField[];
 }) {
+  const { data: session } = useSession();
   const initialState: State = { message: null, errors: {} };
-  const updateInvoiceWithId = updateInvoice.bind(null, invoice.id);
+  const updateInvoiceWithId = updateInvoice.bind(
+    null,
+    invoice.id,
+    session?.user?.id!
+  );
   const [state, formAction] = useActionState(updateInvoiceWithId, initialState);
+
+  // Manage the status state
+  const [status, setStatus] = useState(invoice.status);
+
+  // Sync the status state with the invoice.status prop
+  useEffect(() => {
+    setStatus(invoice.status);
+  }, [invoice.status]);
+
+  // Handle the change of the radio buttons
+  const handleStatusChange = (newStatus: InvoiceStatusType) => {
+    setStatus(newStatus);
+  };
 
   return (
     <form action={formAction}>
@@ -105,7 +129,8 @@ export default function EditInvoiceForm({
                   name="status"
                   type="radio"
                   value="pending"
-                  defaultChecked={invoice.status === 'pending'}
+                  checked={status === "pending"}
+                  onChange={() => handleStatusChange("pending")}
                   className="h-4 w-4 border-gray-300 bg-gray-100 text-gray-600 focus:ring-2"
                 />
                 <label
@@ -121,7 +146,8 @@ export default function EditInvoiceForm({
                   name="status"
                   type="radio"
                   value="paid"
-                  defaultChecked={invoice.status === 'paid'}
+                  checked={status === "paid"}
+                  onChange={() => handleStatusChange("paid")}
                   className="h-4 w-4 border-gray-300 bg-gray-100 text-gray-600 focus:ring-2"
                 />
                 <label
@@ -129,6 +155,23 @@ export default function EditInvoiceForm({
                   className="ml-2 flex cursor-pointer items-center gap-1.5 rounded-full bg-green-500 px-3 py-1.5 text-xs font-medium text-white"
                 >
                   Paid <CheckIcon className="h-4 w-4" />
+                </label>
+              </div>
+              <div className="flex items-center">
+                <input
+                  id="canceled"
+                  name="status"
+                  type="radio"
+                  value="canceled"
+                  checked={status === "canceled"}
+                  onChange={() => handleStatusChange("canceled")}
+                  className="h-4 w-4 border-gray-300 bg-gray-100 text-gray-600 focus:ring-2"
+                />
+                <label
+                  htmlFor="canceled"
+                  className="ml-2 flex cursor-pointer items-center gap-1.5 rounded-full bg-violet-500 px-3 py-1.5 text-xs font-medium text-white"
+                >
+                  Canceled <XCircleIcon className="h-4 w-4" />
                 </label>
               </div>
             </div>
